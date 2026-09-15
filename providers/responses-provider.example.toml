@@ -1,0 +1,8 @@
+# Replace the provider ID, display name, endpoint, and environment-variable name.
+# Never place a credential value in this file.
+[model_providers.provider_id]
+name = "Provider display name"
+base_url = "https://provider.example/v1"
+wire_api = "responses"
+env_key = "PROVIDER_API_KEY"
+requires_openai_auth = false

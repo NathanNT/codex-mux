@@ -1,0 +1,10 @@
+[features.multi_agent_v2]
+plaintext_inter_agent_messages = true
+tool_namespace = "external_agents"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com"
+wire_api = "responses"
+env_key = "DEEPSEEK_API_KEY"
+requires_openai_auth = false

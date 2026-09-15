@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+/state/
+/bin/*.exe
+/codex-environments.local.json

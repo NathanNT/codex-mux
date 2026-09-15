@@ -1,0 +1,7 @@
+name = "external_agent"
+description = "Read-only external-provider agent."
+model_provider = "provider_id"
+model = "provider-model-id"
+model_reasoning_effort = "low"
+sandbox_mode = "read-only"
+developer_instructions = "Perform only the delegated read-only task. Do not modify files. Return concise factual results."
