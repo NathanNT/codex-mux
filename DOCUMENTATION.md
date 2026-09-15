@@ -84,32 +84,8 @@ The validated compatibility executable inside the archive has this SHA-256 hash:
 The script resolves the environment in this order:
 
 1. an explicit `-CodexHome` argument;
-2. an explicit `-Environment` alias from `codex-environments.local.json`;
-3. the current process's `CODEX_HOME` environment variable;
-4. the registry's `default` alias;
-5. the standard `%USERPROFILE%\.codex` directory.
-
-The local registry uses this structure:
-
-```json
-{
-  "default": "work",
-  "environments": [
-    {
-      "name": "work",
-      "codex_home": "C:\\absolute\\path\\to\\codex"
-    }
-  ]
-}
-```
-
-The file is machine-specific, contains no credentials, and is ignored by Git. Select an entry by name:
-
-```powershell
-.\manage.ps1 status -Environment 'work'
-.\manage.ps1 enable -Environment 'work'
-.\manage.ps1 disable -Environment 'work'
-```
+2. the current process's `CODEX_HOME` environment variable;
+3. the standard `%USERPROFILE%\.codex` directory.
 
 For one of several Codex environments, pass the correct directory to every command:
 
@@ -258,7 +234,7 @@ The script never sets the root `model`, root `model_provider`, OpenAI login, app
 
 Reports the selected Codex home, managed provider state, key presence, agent profile, executable, and VS Code executable selection. It never prints the key.
 
-Use `-Environment '<name>'` for a registry alias or `-CodexHome '<absolute-path>'` for a direct path. These options are mutually exclusive.
+Use `-CodexHome '<absolute-path>'` to target a specific Codex environment directly.
 
 ### Doctor
 

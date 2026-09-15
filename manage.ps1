@@ -4,70 +4,18 @@ param(
     [ValidateSet('doctor', 'enable', 'status', 'disable')]
     [string]$Action = 'status',
 
-    [string]$CodexHome,
-
-    [string]$Environment,
-
-    [string]$EnvironmentFile
+    [string]$CodexHome
 )
 
 $ErrorActionPreference = 'Stop'
 $kitRoot = $PSScriptRoot
-$environmentRegistryPath = if ([string]::IsNullOrWhiteSpace($EnvironmentFile)) {
-    Join-Path $kitRoot 'codex-environments.local.json'
-} else {
-    [IO.Path]::GetFullPath($EnvironmentFile)
-}
-
-function Get-RegisteredCodexHome([string]$Name) {
-    if (-not (Test-Path -LiteralPath $environmentRegistryPath)) {
-        throw "Codex environment registry not found: $environmentRegistryPath"
-    }
-    $registry = Get-Content -Raw -LiteralPath $environmentRegistryPath | ConvertFrom-Json
-    $matches = @($registry.environments | Where-Object {
-        [StringComparer]::OrdinalIgnoreCase.Equals([string]$_.name, $Name)
-    })
-    if ($matches.Count -eq 0) {
-        throw "Codex environment '$Name' was not found in $environmentRegistryPath"
-    }
-    if ($matches.Count -gt 1) {
-        throw "Codex environment '$Name' is duplicated in $environmentRegistryPath"
-    }
-    $registeredHome = [string]$matches[0].codex_home
-    if ([string]::IsNullOrWhiteSpace($registeredHome) -or -not [IO.Path]::IsPathRooted($registeredHome)) {
-        throw "Codex environment '$Name' must have an absolute codex_home path."
-    }
-    return $registeredHome
-}
-
-if (-not [string]::IsNullOrWhiteSpace($CodexHome) -and
-    -not [string]::IsNullOrWhiteSpace($Environment)) {
-    throw 'Use either -CodexHome or -Environment, not both.'
-}
-
 $codexHomeSource = 'parameter'
 if ([string]::IsNullOrWhiteSpace($CodexHome)) {
-    if (-not [string]::IsNullOrWhiteSpace($Environment)) {
-        $CodexHome = Get-RegisteredCodexHome $Environment
-        $codexHomeSource = "environment registry alias '$Environment'"
-    } else {
-        $configuredCodexHome = [Environment]::GetEnvironmentVariable('CODEX_HOME')
-    }
-    if ([string]::IsNullOrWhiteSpace($CodexHome) -and
-        -not [string]::IsNullOrWhiteSpace($configuredCodexHome)) {
+    $configuredCodexHome = [Environment]::GetEnvironmentVariable('CODEX_HOME')
+    if (-not [string]::IsNullOrWhiteSpace($configuredCodexHome)) {
         $CodexHome = $configuredCodexHome
         $codexHomeSource = 'CODEX_HOME environment variable'
-    }
-    if ([string]::IsNullOrWhiteSpace($CodexHome) -and
-        (Test-Path -LiteralPath $environmentRegistryPath)) {
-        $registry = Get-Content -Raw -LiteralPath $environmentRegistryPath | ConvertFrom-Json
-        $defaultEnvironment = [string]$registry.default
-        if (-not [string]::IsNullOrWhiteSpace($defaultEnvironment)) {
-            $CodexHome = Get-RegisteredCodexHome $defaultEnvironment
-            $codexHomeSource = "environment registry default '$defaultEnvironment'"
-        }
-    }
-    if ([string]::IsNullOrWhiteSpace($CodexHome)) {
+    } else {
         $userProfileDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
         $CodexHome = Join-Path $userProfileDirectory '.codex'
         $codexHomeSource = 'default user profile .codex'

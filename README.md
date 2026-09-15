@@ -9,17 +9,8 @@ The included profile uses DeepSeek and is read-only. This build targets Codex `0
 The script resolves the target environment in this order:
 
 1. `-CodexHome 'C:\path\to\codex-home'`
-2. `-Environment '<name>'` from the local environment registry
-3. the current process's `CODEX_HOME` environment variable
-4. the registry's `default` environment
-5. the standard default `%USERPROFILE%\.codex`
-
-Your machine-specific registry is `codex-environments.local.json`. It is ignored by Git and contains paths only, never credentials. Select one of its named environments with:
-
-```powershell
-.\manage.ps1 status -Environment 'compte-1'
-.\manage.ps1 enable -Environment 'compte-1'
-```
+2. the current process's `CODEX_HOME` environment variable
+3. the standard default `%USERPROFILE%\.codex`
 
 For a specific environment, pass the same path to every command:
 
@@ -30,7 +21,7 @@ $selectedCodexHome = 'C:\path\to\my-codex-environment\codex'
 .\manage.ps1 status -CodexHome $selectedCodexHome
 ```
 
-The status output shows both `codex_home` and `codex_home_source`. One repository copy manages one enabled Codex environment at a time. Run `disable -Environment '<current-name>'` before enabling another one.
+The status output shows both `codex_home` and `codex_home_source`. One repository copy manages one enabled Codex environment at a time. Run `disable` with the same `-CodexHome` before enabling another one.
 
 ## Change the external model
 
