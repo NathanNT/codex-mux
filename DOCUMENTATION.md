@@ -24,6 +24,78 @@ The compatibility build makes the smallest required changes:
 
 OpenAI wire behavior remains unchanged when the compatibility feature is disabled.
 
+## Approval-routing decision and maintenance cost
+
+The first implementation solved IDA MCP approval failures inside Codex itself.
+When an external-provider child triggered automatic review, the reserved
+`codex-auto-review` model inherited the child's DeepSeek provider. DeepSeek
+rightly rejected that OpenAI-only model name. The compatibility patch now
+creates that reserved review session with the registered OpenAI provider.
+
+That fix is general and the validated binary works, but it is expensive to
+maintain for the narrower IDA use case. A cold Windows release build compiles
+the complete Rust CLI with release optimizations and can take tens of minutes.
+The initial diagnosis also required two builds because `approval_policy =
+"never"` by itself rejects an MCP operation that still requires approval.
+
+For a known read-only MCP surface, prefer Codex's native per-tool approval
+configuration before adding or porting a core patch. The pinned Codex source
+maps `approval_mode = "approve"` to execution without an approval request, and
+the official configuration reference exposes the setting at
+`mcp_servers.<id>.tools.<tool>.approval_mode`.
+
+Keep the current OpenAI reviewer-routing patch as a tested fallback for tools
+that genuinely need automatic review. For the next Codex port, first evaluate
+whether an explicit read-only IDA allowlist removes the need to carry that
+specific part of the source patch.
+
+## Minimal read-only IDA procedure
+
+This is the preferred low-maintenance design for DeepSeek workers that only
+inspect IDA databases. It has not replaced the current release profile yet;
+apply and smoke-test it deliberately during the next maintenance window.
+
+1. Inventory the exact IDA MCP tools required by the workers and classify each
+   one from its implementation, not its name alone.
+2. Keep the IDA server default approval mode restrictive.
+3. Set `approval_mode = "approve"` only for individually audited read-only
+   tools.
+4. Use a read-only worker sandbox with `approval_policy = "never"` and omit the
+   automatic reviewer from that profile.
+5. Restart Codex, invoke every allowlisted tool once, and confirm from runtime
+   metadata that no `codex-auto-review` request was created.
+6. Leave new, unknown, mutating, database-writing, debugger, scripting, and
+   process-control tools unapproved. Add a tool only after reviewing it.
+
+Example for the harmless session inventory operation:
+
+```toml
+[mcp_servers.ida]
+default_tools_approval_mode = "prompt"
+
+[mcp_servers.ida.tools.idb_list]
+approval_mode = "approve"
+```
+
+Corresponding worker profile:
+
+```toml
+model_provider = "deepseek"
+model = "deepseek-flash"
+sandbox_mode = "read-only"
+approval_policy = "never"
+```
+
+Do not set `default_tools_approval_mode = "approve"` on the complete IDA MCP
+server unless a separate facade exposes only audited read-only operations.
+Per-tool entries make tool-set changes fail closed: a newly added IDA method
+does not become implicitly trusted.
+
+The durable implementation should make `manage.ps1 doctor` compare the
+configured allowlist with a repository-owned list and warn when the IDA MCP
+tool inventory changes. Until that check exists, treat the example above as a
+manual procedure rather than a claim that all IDA tools are approved safely.
+
 ## Repository layout
 
 ```text
@@ -75,6 +147,108 @@ on the upstream `rusty_v8` binary archive being available.
 - A local `.env` containing `DEEPSEEK_API_KEY=<value>`.
 
 Run `doctor` after any Codex or extension update. A different Codex version may require a newly matched compatibility build.
+
+## What happens when Codex or the VS Code extension updates
+
+The kit uses a side-by-side executable under this repository and selects it
+through the VS Code user setting `chatgpt.cliExecutable`. A normal extension
+update should preserve that user setting and does not overwrite the
+repository-owned executable.
+
+Consequently, an update normally has these effects:
+
+- the extension itself is updated;
+- the newly bundled upstream Codex executable is installed;
+- this kit continues to launch its older pinned compatibility executable;
+- the source changes are not erased, but new upstream CLI fixes are not active
+  in the pinned executable;
+- a sufficiently large protocol change may make the updated extension and the
+  older compatibility executable incompatible.
+
+Run `manage.ps1 doctor` after every update. To use the newly bundled upstream
+Codex immediately, run `manage.ps1 disable` and restart VS Code. This preserves
+the repository, patch, and compatibility executable while removing only the
+managed selection and configuration. Re-enable only after confirming version
+compatibility or producing a matching build.
+
+## Porting and rebuilding for a new Codex version
+
+Use this procedure only when the new upstream behavior is needed and the
+existing compatibility executable is no longer the desired target.
+
+1. Close active Codex sessions and record the current working version:
+
+   ```powershell
+   .\manage.ps1 status
+   .\bin\codex-external-subagents.exe --version
+   git status --short
+   ```
+
+2. Disable the kit temporarily and restart VS Code so the updated bundled
+   executable can be identified and tested independently:
+
+   ```powershell
+   .\manage.ps1 disable
+   ```
+
+3. Identify the exact matching upstream OpenAI Codex tag. Do not approximate a
+   release tag from the extension version.
+
+4. Create a versioned patch filename under `patches/`. Port only the deltas
+   still required:
+
+   - external child `model_provider` propagation;
+   - opt-in plaintext inter-agent transport for non-OpenAI providers;
+   - failure instead of silent provider fallback;
+   - read-only child-authority preservation;
+   - OpenAI reviewer routing only if the per-tool MCP allowlist cannot cover
+     the intended workflow.
+
+5. Update `$upstreamTag` and `$patchPath` in `build.ps1` to the exact new tag
+   and patch. Verify the patch before compiling:
+
+   ```powershell
+   git clone --depth 1 --branch <exact-upstream-tag> https://github.com/openai/codex.git <new-empty-directory>
+   git -C <new-empty-directory> apply --check <absolute-patch-path>
+   ```
+
+6. Run the focused tests before the full release build. `build.ps1` performs
+   both by default:
+
+   ```powershell
+   .\build.ps1
+   ```
+
+   A cold release build may take tens of minutes. Do not repeat it merely to
+   diagnose a configuration problem. Use targeted `cargo test` commands and a
+   debug build in the temporary source checkout until the source delta is
+   stable, then perform one final release build.
+
+7. Verify the resulting executable and configuration without exposing the API
+   key:
+
+   ```powershell
+   .\bin\codex-external-subagents.exe --version
+   .\manage.ps1 doctor
+   ```
+
+8. Re-enable the kit, restart VS Code, and run these bounded smoke tests:
+
+   - one DeepSeek child reading a harmless repository file;
+   - two concurrent read-only children;
+   - `idb_list` through the audited IDA configuration;
+   - one ordinary OpenAI child;
+   - confirmation from runtime metadata that each child used the intended
+     provider.
+
+9. Review `git diff`, run a secret scan, commit the source patch and
+   documentation, and publish binaries only through a release archive with
+   updated checksums, `LICENSE`, and `NOTICE`.
+
+The side-by-side path remains stable, so `chatgpt.cliExecutable` does not need
+to change when the rebuilt executable replaces the previous compatibility
+binary. Keep the last known-good release archive until the new smoke tests
+pass.
 
 ## Installation
 
