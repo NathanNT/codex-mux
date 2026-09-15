@@ -4,7 +4,7 @@
 
 This kit keeps the primary Codex agent on its existing OpenAI configuration while allowing explicitly selected native Codex subagents to use a separately registered, Responses-compatible provider. DeepSeek is the included example, but the design follows Codex's provider abstraction.
 
-The kit targets the VS Code extension's bundled Codex version `0.154.0-alpha.6.2`. It uses a side-by-side executable and never replaces the original Codex installation. The included `deepseek_test` agent is restricted to a read-only sandbox.
+The kit targets the VS Code extension's bundled Codex version `0.154.0-alpha.6.2`. It uses a side-by-side executable and never replaces the original Codex installation. The included `deepseek_test` agent uses a read-only sandbox and OpenAI automatic approval review.
 
 ## Why a compatibility build is required
 
@@ -18,6 +18,7 @@ The compatibility build makes the smallest required changes:
 - provide an opt-in plaintext inter-agent message mode under a non-reserved tool namespace;
 - convert plaintext agent messages to standard user messages only for non-OpenAI providers;
 - fail clearly instead of silently falling back to OpenAI;
+- route the reserved automatic approval reviewer through OpenAI when an external worker triggers it;
 - preserve native Codex threads, tools, parallelism, follow-up transport, and result collection;
 - allow an agent profile to reduce its sandbox to read-only without expanding parent authority.
 
@@ -48,6 +49,23 @@ OpenAI wire behavior remains unchanged when the compatibility feature is disable
 
 The executables are also ignored because the patched Codex executable is larger than GitHub's normal per-file limit. They are distributed in a GitHub Release archive that also includes `LICENSE` and `NOTICE`.
 
+The complete source delta is tracked in `patches/`. To reproduce the Windows
+executables from the pinned upstream tag, run:
+
+```powershell
+.\build.ps1
+```
+
+The script clones OpenAI Codex `rust-v0.154.0-alpha.6.2` into a short, unique
+temporary directory, verifies and applies the tracked patch, runs focused
+tests, builds the patched Codex executable, and copies it into `bin/`. It
+refuses to reuse or delete an existing source directory.
+
+The compatibility patch does not modify `codex-code-mode-host`. Keep the
+matching host distributed in the release archive. To rebuild that unchanged
+component too, use `./build.ps1 -BuildCodeModeHost`; this additionally depends
+on the upstream `rusty_v8` binary archive being available.
+
 ## Prerequisites
 
 - Windows PowerShell.
@@ -76,7 +94,7 @@ NOTICE
 The validated compatibility executable inside the archive has this SHA-256 hash:
 
 ```text
-3FBF73A605DF64E13C416401958AEB1817CF245CC83E6BD64065FAEC59C97EDC
+84BD0BC0D6695A3231862DEA512E08FC295CEAE8C95EAF9D159760C4C5291620
 ```
 
 ### 2. Select the active Codex home
@@ -143,6 +161,7 @@ Verify that:
 - `provider_block_enabled` is `True`;
 - `patched_binary_present` is `True`;
 - `vscode_uses_patched_binary` is `True` when VS Code settings are managed;
+- `agent_read_only_auto_review` is `True`;
 - `primary_provider` remains `openai`.
 
 `enable` refuses to overwrite an existing `deepseek` provider, `deepseek_test` agent, or different `chatgpt.cliExecutable` setting. Repeated enablement is idempotent and preserves the recovery manifest.
@@ -166,6 +185,9 @@ Edit `agents/deepseek_test.toml` and set `model` to an exact model ID supported 
 ```toml
 model_provider = "deepseek"
 model = "deepseek-flash"
+sandbox_mode = "read-only"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
 ```
 
 This setting applies only to `deepseek_test`; it does not change the root OpenAI model or provider. Restart Codex or VS Code before spawning a new child so the profile is reloaded.
@@ -186,6 +208,28 @@ parent's behalf.
 ```
 
 The child runs in a native Codex thread and can use normal Codex read tools. Its profile enforces `sandbox_mode = "read-only"` and forbids file modification.
+
+### Read-only policy with automatic review
+
+External workers combine these two settings:
+
+```toml
+sandbox_mode = "read-only"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+```
+
+Reads, searches, and inspections already permitted by the sandbox proceed
+directly. Approval-gated MCP operations and sandbox requests are routed to the
+automatic reviewer instead of blocking for user input. The compatibility build
+keeps the worker on its selected provider but creates the reserved
+`codex-auto-review` session with the registered OpenAI provider. This prevents
+the reserved model name from being sent to DeepSeek and preserves the safety
+decision.
+
+Do not solve the incompatibility by aliasing `codex-auto-review` to an external
+general-purpose model or by weakening the sandbox. Keep privileged, mutating,
+or otherwise approval-requiring work with the OpenAI parent.
 
 ### Parallel-child test
 
@@ -242,7 +286,9 @@ Use `-CodexHome '<absolute-path>'` to target a specific Codex environment direct
 .\manage.ps1 doctor
 ```
 
-Checks the executable version and, when enabled, validates configuration parsing plus the primary model/provider.
+Checks the executable version, verifies that the DeepSeek profile is read-only
+with automatic review, and, when enabled, validates configuration
+parsing plus the primary model/provider.
 
 ### Enable
 
@@ -294,7 +340,8 @@ Do not delete the manifest before successful restoration and do not remove confi
 3. Store only the environment-variable name, never the credential value.
 4. Copy `agents/external_agent.example.toml` and set `model_provider` to the registered ID.
 5. Select a model supported by that endpoint.
-6. Register the profile under `[agents.<name>]` in the trusted parent configuration.
+6. Preserve `sandbox_mode = "read-only"`, `approval_policy = "on-request"`, and `approvals_reviewer = "auto_review"` for an automatically reviewed read-only worker.
+7. Register the profile under `[agents.<name>]` in the trusted parent configuration.
 
 Provider URLs and authentication definitions remain parent-owned. Agent profiles select registered provider IDs but cannot redefine provider authentication.
 
@@ -306,7 +353,8 @@ To remove one agent, remove its `[agents.<name>]` declaration and profile file. 
 - `.env`, generated state, and release executables are ignored by Git.
 - Authorization headers are not logged by this kit.
 - External-provider failures are surfaced and never silently rerouted to OpenAI.
-- The test agent is read-only.
+- The test agent is read-only; approval-gated actions are decided by OpenAI's automatic reviewer rather than the external worker.
+- Mandatory automatic approval reviews use OpenAI's reserved reviewer rather than the external worker provider.
 - Agent profiles cannot expand sandbox permissions, approval policy, or writable roots.
 - The primary OpenAI provider is unchanged.
 
@@ -342,6 +390,7 @@ The relevant modified Codex source areas were:
 - `core/src/agent/role.rs` and its tests;
 - `core/src/client.rs` and its tests;
 - `core/src/config/mod.rs` and configuration tests;
+- `core/src/guardian/reviewer_config.rs` and Guardian tests;
 - native multi-agent handlers, tool specifications, router, and their tests;
 - multi-agent resume integration tests;
 - `features/src/feature_configs.rs`.

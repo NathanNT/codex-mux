@@ -4,3 +4,4 @@
 /state/
 /bin/*.exe
 /codex-environments.local.json
+/local-re-workflow/

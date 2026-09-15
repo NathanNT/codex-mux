@@ -81,6 +81,9 @@ function Get-StatusObject {
     $settingsText = if (Test-Path -LiteralPath $vscodeSettingsPath) {
         [IO.File]::ReadAllText($vscodeSettingsPath)
     } else { '' }
+    $agentText = if (Test-Path -LiteralPath $agentPath) {
+        [IO.File]::ReadAllText($agentPath)
+    } else { '' }
     [pscustomobject]@{
         codex_home = $CodexHome
         codex_home_source = $codexHomeSource
@@ -90,6 +93,11 @@ function Get-StatusObject {
             [Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY')
         )
         agent_profile_present = Test-Path -LiteralPath $agentPath
+        agent_read_only_auto_review = (
+            $agentText -match '(?m)^\s*sandbox_mode\s*=\s*"read-only"\s*$' -and
+            $agentText -match '(?m)^\s*approval_policy\s*=\s*"on-request"\s*$' -and
+            $agentText -match '(?m)^\s*approvals_reviewer\s*=\s*"auto_review"\s*$'
+        )
         patched_binary_present = Test-Path -LiteralPath $binaryPath
         vscode_uses_patched_binary = $settingsText -match '"chatgpt\.cliExecutable"\s*:\s*"[^"\r\n]*codex-external-subagents\.exe"'
     }
@@ -243,6 +251,9 @@ switch ($Action) {
         $status = Get-StatusObject
         $status | Format-List
         if (-not $status.patched_binary_present) { throw "Patched binary not found: $binaryPath" }
+        if (-not $status.agent_read_only_auto_review) {
+            throw 'The DeepSeek profile must combine read-only sandboxing with on-request automatic review.'
+        }
         & $binaryPath --version
         if ($status.provider_block_enabled) {
             $doctorJson = & $binaryPath doctor --json 2>$null

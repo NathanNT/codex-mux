@@ -4,6 +4,13 @@ A reversible compatibility kit for running native Codex subagents through an ext
 
 The included profile uses DeepSeek and is read-only. This build targets Codex `0.154.0-alpha.6.2`.
 
+The external child uses a read-only sandbox with automatic approval review.
+Ordinary reads proceed directly; approval-gated MCP operations are reviewed by
+OpenAI without a manual prompt. When review uses the reserved
+`codex-auto-review` model, the compatibility build routes that reviewer through
+the registered OpenAI provider while normal worker inference continues through
+DeepSeek.
+
 ## Select the Codex environment
 
 The script resolves the target environment in this order:
@@ -34,6 +41,18 @@ model = "deepseek-flash"
 
 This changes only the `deepseek_test` child. It does not change the primary OpenAI model or provider. Restart Codex or VS Code before spawning a new child.
 
+The profile deliberately combines:
+
+```toml
+sandbox_mode = "read-only"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+```
+
+This is permissive for reads already in scope and routes approval-gated MCP or
+sandbox requests to OpenAI's automatic reviewer. It does not disable mandatory
+ARC or Guardian review.
+
 ## Download
 
 Download the Windows archive and `SHA256SUMS.txt` from the [latest GitHub Release](https://github.com/NathanNT/codex-mux/releases/latest). Verify the archive checksum, then extract it into the repository root. The archive includes both required executables together with `LICENSE` and `NOTICE`.
@@ -59,6 +78,10 @@ Restore the original configuration at any time:
 The original Codex installation and primary OpenAI configuration are never replaced.
 
 See [DOCUMENTATION.md](DOCUMENTATION.md) for installation, usage, verification, security, provider configuration, and restoration details.
+
+The compatibility source delta is included under `patches/`; `build.ps1`
+reproduces the patched Codex executable from the pinned upstream tag. The
+unchanged matching code-mode host remains part of the release archive.
 
 ## License
 

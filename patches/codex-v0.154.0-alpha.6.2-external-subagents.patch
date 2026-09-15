@@ -1,0 +1,514 @@
+warning: in the working copy of 'codex-rs/core/src/agent/control/spawn.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/agent/role.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/agent/role_tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/client.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/config/config_tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/config/mod.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/guardian/reviewer_config.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/guardian/tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/tools/handlers/multi_agents/spawn.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/tools/router.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/core/src/tools/router_tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/features/src/feature_configs.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'codex-rs/features/src/tests.rs', LF will be replaced by CRLF the next time Git touches it
+diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
+index 306e770..dd4bfef 100644
+--- a/codex-rs/core/src/agent/control/spawn.rs
++++ b/codex-rs/core/src/agent/control/spawn.rs
+@@ -399,40 +399,12 @@ impl AgentControl {
+         }
+         config.model_reasoning_effort = stored_reasoning_effort;
+         if let Some(role_name) = session_source.get_agent_role() {
+-            let runtime_approval_policy = config.permissions.approval_policy.value();
+-            let runtime_approvals_reviewer = config.approvals_reviewer;
+             let runtime_cwd = config.cwd.clone();
+-            let runtime_permission_profile = match config.permissions.active_permission_profile() {
+-                Some(active_permission_profile) => {
+-                    PermissionProfileSnapshot::active_with_profile_workspace_roots(
+-                        config.permissions.permission_profile().clone(),
+-                        active_permission_profile,
+-                        config.permissions.profile_workspace_roots().to_vec(),
+-                    )
+-                }
+-                None => PermissionProfileSnapshot::legacy(
+-                    config.permissions.permission_profile().clone(),
+-                ),
+-            };
+
+             apply_role_to_config(&mut config, Some(&role_name))
+                 .await
+                 .map_err(CodexErr::InvalidRequest)?;
+-            config
+-                .permissions
+-                .approval_policy
+-                .set(runtime_approval_policy)
+-                .map_err(|err| {
+-                    CodexErr::InvalidRequest(format!("approval_policy is invalid: {err}"))
+-                })?;
+-            config.approvals_reviewer = runtime_approvals_reviewer;
+             config.cwd = runtime_cwd;
+-            config
+-                .permissions
+-                .set_permission_profile_from_session_snapshot(runtime_permission_profile)
+-                .map_err(|err| {
+-                    CodexErr::InvalidRequest(format!("permission_profile is invalid: {err}"))
+-                })?;
+         }
+         config.service_tier = self.root_service_tier();
+         if let Some(model) = stored_model {
+diff --git a/codex-rs/core/src/agent/role.rs b/codex-rs/core/src/agent/role.rs
+index cb20377..dfd1357 100644
+--- a/codex-rs/core/src/agent/role.rs
++++ b/codex-rs/core/src/agent/role.rs
+@@ -16,12 +16,15 @@ use codex_config::loader::resolve_relative_paths_in_config_toml;
+ use codex_exec_server::read_sensitive_file_to_string;
+ use codex_features::Feature;
+ use codex_features::feature_for_key;
++use codex_protocol::config_types::ApprovalsReviewer;
+ use codex_protocol::config_types::Personality;
+ use codex_protocol::config_types::ReasoningSummary;
++use codex_protocol::config_types::SandboxMode;
+ use codex_protocol::config_types::ServiceTier;
+ use codex_protocol::config_types::Verbosity;
+ use codex_protocol::models::BaseInstructionsProvenance;
+ use codex_protocol::openai_models::ReasoningEffort;
++use codex_protocol::protocol::AskForApproval;
+ use serde::Serialize;
+ use std::collections::BTreeMap;
+ use std::collections::BTreeSet;
+@@ -37,11 +40,15 @@ const AGENT_TYPE_UNAVAILABLE_ERROR: &str = "agent type is currently not availabl
+ struct AgentRoleOverrides {
+     developer_instructions: Option<String>,
+     model: Option<String>,
++    model_provider: Option<String>,
+     model_reasoning_effort: Option<ReasoningEffort>,
+     model_reasoning_summary: Option<ReasoningSummary>,
+     model_verbosity: Option<Verbosity>,
+     personality: Option<Personality>,
+     service_tier: Option<String>,
++    sandbox_mode: Option<SandboxMode>,
++    approval_policy: Option<AskForApproval>,
++    approvals_reviewer: Option<ApprovalsReviewer>,
+     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+     features: BTreeMap<String, bool>,
+     skills: Option<SkillsConfig>,
+@@ -77,14 +84,23 @@ async fn apply_role_to_config_inner(
+     };
+     let role_layer_toml = load_role_layer_toml(config, config_file, is_built_in, role_name).await?;
+     let role_config = deserialize_config_toml_with_base(role_layer_toml, &config.codex_home)?;
++    let external_read_only_profile = role_config.sandbox_mode == Some(SandboxMode::ReadOnly)
++        && role_config.approval_policy == Some(AskForApproval::OnRequest)
++        && role_config.approvals_reviewer == Some(ApprovalsReviewer::AutoReview);
+     let mut overrides = AgentRoleOverrides {
+         developer_instructions: role_config.developer_instructions,
+         model: role_config.model,
++        model_provider: external_read_only_profile
++            .then_some(role_config.model_provider)
++            .flatten(),
+         model_reasoning_effort: role_config.model_reasoning_effort,
+         model_reasoning_summary: role_config.model_reasoning_summary,
+         model_verbosity: role_config.model_verbosity,
+         personality: role_config.personality,
+         service_tier: role_config.service_tier,
++        sandbox_mode: external_read_only_profile.then_some(SandboxMode::ReadOnly),
++        approval_policy: external_read_only_profile.then_some(AskForApproval::OnRequest),
++        approvals_reviewer: external_read_only_profile.then_some(ApprovalsReviewer::AutoReview),
+         ..Default::default()
+     };
+
+@@ -185,6 +201,14 @@ mod role_overrides {
+         if let Some(model) = &overrides.model {
+             next_config.model = Some(model.clone());
+         }
++        if let Some(model_provider_id) = &overrides.model_provider {
++            next_config.model_provider = next_config
++                .model_providers
++                .get(model_provider_id)
++                .cloned()
++                .ok_or_else(|| anyhow!("Model provider `{model_provider_id}` not found"))?;
++            next_config.model_provider_id = model_provider_id.clone();
++        }
+         if let Some(instructions) = &overrides.developer_instructions {
+             next_config.developer_instructions = Some(instructions.clone());
+         }
+@@ -210,6 +234,32 @@ mod role_overrides {
+                 None => Some(service_tier.clone()),
+             };
+         }
++        if overrides.sandbox_mode == Some(SandboxMode::ReadOnly) {
++            let permission_profile = next_config
++                .permissions
++                .permission_profile()
++                .intersect_with_read_only()
++                .ok_or_else(|| {
++                    anyhow!("agent role cannot reduce an externally enforced sandbox")
++                })?;
++            next_config
++                .permissions
++                .set_permission_profile(permission_profile)?;
++        }
++        if overrides.approval_policy == Some(AskForApproval::OnRequest) {
++            next_config
++                .permissions
++                .approval_policy
++                .set(AskForApproval::OnRequest)?;
++        }
++        if overrides.approvals_reviewer == Some(ApprovalsReviewer::AutoReview) {
++            next_config
++                .config_layer_stack
++                .requirements()
++                .approvals_reviewer
++                .can_set(&ApprovalsReviewer::AutoReview)?;
++            next_config.approvals_reviewer = ApprovalsReviewer::AutoReview;
++        }
+         for key in overrides.features.keys() {
+             if let Some(feature) = feature_for_key(key) {
+                 next_config.features.disable(feature)?;
+diff --git a/codex-rs/core/src/agent/role_tests.rs b/codex-rs/core/src/agent/role_tests.rs
+index 6abe361..a690ee6 100644
+--- a/codex-rs/core/src/agent/role_tests.rs
++++ b/codex-rs/core/src/agent/role_tests.rs
+@@ -481,6 +481,55 @@ command = "attacker-command"
+     }
+ }
+
++#[tokio::test]
++async fn apply_role_can_select_registered_provider_with_read_only_auto_review() {
++    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
++    let mut external_provider =
++        codex_model_provider_info::ModelProviderInfo::create_openai_provider(None);
++    external_provider.name = "DeepSeek".to_string();
++    external_provider.base_url = Some("https://api.deepseek.example".to_string());
++    external_provider.requires_openai_auth = false;
++    config
++        .model_providers
++        .insert("deepseek".to_string(), external_provider.clone());
++    let role_path = write_role_config(
++        &home,
++        "external-read-only.toml",
++        r#"model_provider = "deepseek"
++model = "deepseek-flash"
++sandbox_mode = "read-only"
++approval_policy = "on-request"
++approvals_reviewer = "auto_review"
++"#,
++    )
++    .await;
++    config.agent_roles.insert(
++        "custom".to_string(),
++        AgentRoleConfig {
++            description: None,
++            config_file: Some(role_path),
++            nickname_candidates: None,
++        },
++    );
++
++    apply_role_to_config(&mut config, Some("custom"))
++        .await
++        .expect("external read-only role should apply");
++
++    assert_eq!(config.model_provider_id, "deepseek");
++    assert_eq!(config.model_provider, external_provider);
++    assert_eq!(config.model.as_deref(), Some("deepseek-flash"));
++    assert_eq!(
++        config.permissions.permission_profile(),
++        &codex_protocol::models::PermissionProfile::read_only()
++    );
++    assert_eq!(
++        config.permissions.approval_policy.value(),
++        AskForApproval::OnRequest
++    );
++    assert_eq!(config.approvals_reviewer, ApprovalsReviewer::AutoReview);
++}
++
+ #[tokio::test]
+ async fn apply_role_disables_plugins_unless_required_by_managed_policy() {
+     let home = TempDir::new().expect("create temp dir");
+diff --git a/codex-rs/core/src/client.rs b/codex-rs/core/src/client.rs
+index a813022..90a189d 100644
+--- a/codex-rs/core/src/client.rs
++++ b/codex-rs/core/src/client.rs
+@@ -81,7 +81,9 @@ use codex_protocol::auth::AuthMode;
+ use codex_protocol::ThreadId;
+ use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+ use codex_protocol::config_types::Verbosity as VerbosityConfig;
++use codex_protocol::models::ContentItem;
+ use codex_protocol::models::ResponseItem;
++use codex_protocol::models::plaintext_agent_message_content;
+ use codex_protocol::openai_models::ModelInfo;
+ use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+ use codex_protocol::protocol::AuthRecoveryEvent;
+@@ -940,6 +942,21 @@ impl ModelClient {
+         if !is_openai {
+             for item in &mut input {
+                 item.clear_internal_chat_message_metadata_passthrough();
++                if let ResponseItem::AgentMessage { content, .. } = item {
++                    let text = plaintext_agent_message_content(content).ok_or_else(|| {
++                        CodexErr::InvalidRequest(
++                            "external model providers cannot consume encrypted inter-agent messages"
++                                .to_string(),
++                        )
++                    })?;
++                    *item = ResponseItem::Message {
++                        id: None,
++                        role: "user".to_string(),
++                        content: vec![ContentItem::InputText { text }],
++                        phase: None,
++                        internal_chat_message_metadata_passthrough: None,
++                    };
++                }
+                 if let ResponseItem::FunctionCall {
+                     encrypted_function_args,
+                     ..
+diff --git a/codex-rs/core/src/config/config_tests.rs b/codex-rs/core/src/config/config_tests.rs
+index a093aaf..67609a6 100644
+--- a/codex-rs/core/src/config/config_tests.rs
++++ b/codex-rs/core/src/config/config_tests.rs
+@@ -11565,6 +11565,7 @@ subagent_usage_hint_text = "Subagent guidance."
+ subagent_developer_instructions = "  Delegate carefully.  "
+ multi_agent_mode_hint_text = "Custom mode guidance."
+ tool_namespace = "agents"
++plaintext_inter_agent_messages = true
+ hide_spawn_agent_metadata = true
+ expose_spawn_agent_model_overrides = false
+ wait_agent_enabled = false
+@@ -11620,6 +11621,7 @@ max_concurrent_threads_per_session = 9
+         config.multi_agent_v2.tool_namespace.as_deref(),
+         Some("agents")
+     );
++    assert!(config.multi_agent_v2.plaintext_inter_agent_messages);
+     assert!(config.multi_agent_v2.hide_spawn_agent_metadata);
+     assert!(!config.multi_agent_v2.expose_spawn_agent_model_overrides);
+     assert!(!config.multi_agent_v2.wait_agent_enabled);
+diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
+index ebda977..bf702dd 100644
+--- a/codex-rs/core/src/config/mod.rs
++++ b/codex-rs/core/src/config/mod.rs
+@@ -1285,6 +1285,7 @@ pub struct MultiAgentV2Config {
+     pub subagent_developer_instructions: Option<String>,
+     pub multi_agent_mode_hint_text: Option<String>,
+     pub tool_namespace: Option<String>,
++    pub plaintext_inter_agent_messages: bool,
+     pub hide_spawn_agent_metadata: bool,
+     pub expose_spawn_agent_model_overrides: bool,
+     pub wait_agent_enabled: bool,
+@@ -1304,6 +1305,7 @@ impl MultiAgentV2Config {
+             subagent_developer_instructions: None,
+             multi_agent_mode_hint_text: None,
+             tool_namespace: Some(DEFAULT_MULTI_AGENT_V2_TOOL_NAMESPACE.to_string()),
++            plaintext_inter_agent_messages: false,
+             hide_spawn_agent_metadata: true,
+             expose_spawn_agent_model_overrides: true,
+             wait_agent_enabled: true,
+@@ -2752,6 +2754,9 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
+         .and_then(|config| config.tool_namespace.as_ref())
+         .cloned()
+         .or(default.tool_namespace);
++    let plaintext_inter_agent_messages = base
++        .and_then(|config| config.plaintext_inter_agent_messages)
++        .unwrap_or(default.plaintext_inter_agent_messages);
+     let non_code_mode_only = base
+         .and_then(|config| config.non_code_mode_only)
+         .unwrap_or(default.non_code_mode_only);
+@@ -2767,6 +2772,7 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
+         subagent_developer_instructions,
+         multi_agent_mode_hint_text,
+         tool_namespace,
++        plaintext_inter_agent_messages,
+         hide_spawn_agent_metadata,
+         expose_spawn_agent_model_overrides,
+         wait_agent_enabled,
+diff --git a/codex-rs/core/src/guardian/reviewer_config.rs b/codex-rs/core/src/guardian/reviewer_config.rs
+index a792069..39a463c 100644
+--- a/codex-rs/core/src/guardian/reviewer_config.rs
++++ b/codex-rs/core/src/guardian/reviewer_config.rs
+@@ -4,6 +4,7 @@
+ use std::collections::HashMap;
+
+ use codex_features::Feature;
++use codex_model_provider_info::OPENAI_PROVIDER_ID;
+ use codex_protocol::models::BaseInstructionsProvenance;
+ use codex_protocol::models::PermissionProfile;
+ use codex_protocol::openai_models::ModelMessages;
+@@ -17,6 +18,8 @@ use crate::config::NetworkProxySpec;
+ use super::prompt::BUNDLED_GUARDIAN_POLICY_TEMPLATE;
+ use super::prompt::guardian_policy_prompt_with_config_and_template;
+
++const OPENAI_AUTO_REVIEW_MODEL: &str = "codex-auto-review";
++
+ pub(super) fn read_only_guardian_permission_profile(
+     permission_profile: &PermissionProfile,
+ ) -> PermissionProfile {
+@@ -36,6 +39,16 @@ pub fn build_guardian_review_session_config(
+     model_messages: Option<&ModelMessages>,
+ ) -> anyhow::Result<Config> {
+     let mut guardian_config = parent_config.clone();
++    if active_model == OPENAI_AUTO_REVIEW_MODEL && !guardian_config.model_provider.is_openai() {
++        guardian_config.model_provider = guardian_config
++            .model_providers
++            .get(OPENAI_PROVIDER_ID)
++            .cloned()
++            .ok_or_else(|| {
++                anyhow::anyhow!("automatic approval review requires the registered OpenAI provider")
++            })?;
++        guardian_config.model_provider_id = OPENAI_PROVIDER_ID.to_string();
++    }
+     guardian_config.model = Some(active_model.to_string());
+     guardian_config.model_reasoning_effort = reasoning_effort;
+     guardian_config.model_provider.request_max_retries = Some(1);
+diff --git a/codex-rs/core/src/guardian/tests.rs b/codex-rs/core/src/guardian/tests.rs
+index be1e6fe..0cbeb91 100644
+--- a/codex-rs/core/src/guardian/tests.rs
++++ b/codex-rs/core/src/guardian/tests.rs
+@@ -4020,6 +4020,37 @@ async fn guardian_review_session_config_keeps_bedrock_provider_for_bedrock_gpt_5
+     );
+ }
+
++#[tokio::test]
++async fn guardian_review_session_config_routes_reserved_reviewer_from_external_provider_to_openai()
++{
++    let mut parent_config = test_config().await;
++    let mut external_provider = ModelProviderInfo::create_openai_provider(None);
++    external_provider.name = "DeepSeek".to_string();
++    external_provider.base_url = Some("https://api.deepseek.example".to_string());
++    external_provider.requires_openai_auth = false;
++    parent_config.model_provider_id = "deepseek".to_string();
++    parent_config.model_provider = external_provider;
++
++    let guardian_config = build_guardian_review_session_config_for_test(
++        &parent_config,
++        /*live_network_config*/ None,
++        "codex-auto-review",
++        Some(ReasoningEffort::Low),
++        /*model_messages*/ None,
++    )
++    .expect("guardian config");
++
++    let mut expected_provider = parent_config
++        .model_providers
++        .get(OPENAI_PROVIDER_ID)
++        .cloned()
++        .expect("built-in OpenAI provider");
++    expected_provider.request_max_retries = Some(1);
++    expected_provider.stream_max_retries = Some(1);
++    assert_eq!(guardian_config.model_provider_id, OPENAI_PROVIDER_ID);
++    assert_eq!(guardian_config.model_provider, expected_provider);
++}
++
+ #[tokio::test]
+ async fn guardian_review_session_config_uses_requirements_guardian_policy_config() {
+     let codex_home = tempfile::tempdir().expect("create temp dir");
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents/spawn.rs b/codex-rs/core/src/tools/handlers/multi_agents/spawn.rs
+index a9615ae..65b994b 100644
+--- a/codex-rs/core/src/tools/handlers/multi_agents/spawn.rs
++++ b/codex-rs/core/src/tools/handlers/multi_agents/spawn.rs
+@@ -106,7 +106,8 @@ async fn handle_spawn_agent(
+         apply_spawn_agent_role(&session, &mut config, role_name).await?;
+     }
+     apply_spawn_agent_service_tier(&session, &mut config).await?;
+-    apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
++    // `build_agent_spawn_config` already captured the live parent authority before the
++    // role was applied. Do not overwrite a role's read-only reduction here.
+
+     let result = Box::pin(session.services.agent_control.spawn_agent_with_metadata(
+         config,
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs b/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs
+index 41d3942..7b0e700 100644
+--- a/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs
++++ b/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs
+@@ -142,7 +142,8 @@ async fn handle_spawn_agent(
+         }
+     }
+     apply_spawn_agent_service_tier(&session, &mut config).await?;
+-    apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
++    // `build_agent_spawn_config` already captured the live parent authority before the
++    // role was applied. Do not overwrite a role's read-only reduction here.
+
+     // Remember an applied configured default so cold reload reapplies its restrictions.
+     let persisted_role_name = role_name.or_else(|| {
+diff --git a/codex-rs/core/src/tools/router.rs b/codex-rs/core/src/tools/router.rs
+index 8d5bde3..912f423 100644
+--- a/codex-rs/core/src/tools/router.rs
++++ b/codex-rs/core/src/tools/router.rs
+@@ -43,7 +43,9 @@ pub struct ToolCall {
+
+ impl ToolCall {
+     pub(crate) fn direct_source(&self) -> ToolCallSource {
+-        if self.tool_name.namespace.as_deref() == Some("collaboration")
++        let namespace = self.tool_name.namespace.as_deref();
++        let plaintext_namespace = namespace.is_some_and(|value| value != "collaboration");
++        if (namespace == Some("collaboration") || plaintext_namespace)
+             && matches!(
+                 self.tool_name.name.as_str(),
+                 "spawn_agent" | "send_message" | "followup_task"
+@@ -51,7 +53,7 @@ impl ToolCall {
+             && self
+                 .encrypted_function_args
+                 .as_ref()
+-                .is_some_and(Vec::is_empty)
++                .is_none_or(Vec::is_empty)
+         {
+             ToolCallSource::DirectPlaintextMessage
+         } else {
+diff --git a/codex-rs/core/src/tools/router_tests.rs b/codex-rs/core/src/tools/router_tests.rs
+index 1d6b1d3..4d44a50 100644
+--- a/codex-rs/core/src/tools/router_tests.rs
++++ b/codex-rs/core/src/tools/router_tests.rs
+@@ -239,6 +239,20 @@ async fn build_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()
+     Ok(())
+ }
+
++#[test]
++fn custom_multi_agent_namespace_uses_plaintext_message_source() {
++    let call = ToolCall {
++        tool_name: ToolName::namespaced("external_agents", "spawn_agent"),
++        call_id: "call-1".to_string(),
++        payload: ToolPayload::Function {
++            arguments: "{}".to_string(),
++        },
++        encrypted_function_args: None,
++    };
++
++    assert_eq!(call.direct_source(), ToolCallSource::DirectPlaintextMessage);
++}
++
+ #[tokio::test]
+ async fn build_custom_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()> {
+     let tool_name = "exec".to_string();
+diff --git a/codex-rs/features/src/feature_configs.rs b/codex-rs/features/src/feature_configs.rs
+index b933b03..6a8142c 100644
+--- a/codex-rs/features/src/feature_configs.rs
++++ b/codex-rs/features/src/feature_configs.rs
+@@ -278,6 +278,11 @@ pub struct MultiAgentV2ConfigToml {
+     #[serde(skip_serializing_if = "Option::is_none")]
+     #[schemars(length(min = 1, max = 64), regex(pattern = r"^[a-zA-Z0-9_-]+$"))]
+     pub tool_namespace: Option<String>,
++    /// Treat inter-agent payloads emitted under a custom tool namespace as plaintext.
++    /// This is intended for external Responses-compatible providers that cannot consume
++    /// OpenAI's encrypted inter-agent message format.
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub plaintext_inter_agent_messages: Option<bool>,
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub hide_spawn_agent_metadata: Option<bool>,
+     /// Exposes `model` and `reasoning_effort` on the multi-agent v2 spawn tool and adds
+diff --git a/codex-rs/features/src/tests.rs b/codex-rs/features/src/tests.rs
+index 90c7b40..796b213 100644
+--- a/codex-rs/features/src/tests.rs
++++ b/codex-rs/features/src/tests.rs
+@@ -689,6 +689,7 @@ subagent_usage_hint_text = "Subagent guidance."
+ subagent_developer_instructions = "Delegate carefully."
+ multi_agent_mode_hint_text = "Custom mode guidance."
+ tool_namespace = "agents"
++plaintext_inter_agent_messages = true
+ hide_spawn_agent_metadata = true
+ expose_spawn_agent_model_overrides = true
+ wait_agent_enabled = false
+@@ -716,6 +717,7 @@ non_code_mode_only = true
+             subagent_developer_instructions: Some("Delegate carefully.".to_string()),
+             multi_agent_mode_hint_text: Some("Custom mode guidance.".to_string()),
+             tool_namespace: Some("agents".to_string()),
++            plaintext_inter_agent_messages: Some(true),
+             hide_spawn_agent_metadata: Some(true),
+             expose_spawn_agent_model_overrides: Some(true),
+             wait_agent_enabled: Some(false),

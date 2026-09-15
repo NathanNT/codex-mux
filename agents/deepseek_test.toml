@@ -4,8 +4,9 @@ model_provider = "deepseek"
 model = "deepseek-flash"
 model_reasoning_effort = "low"
 sandbox_mode = "read-only"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
 developer_instructions = """
 Perform only the small read-only task delegated by the parent. Do not modify files.
 Return concise, factual results and preserve any fixed marker requested by the parent.
 """
-
