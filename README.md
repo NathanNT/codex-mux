@@ -43,6 +43,10 @@ model = "deepseek-flash"
 
 This changes only the `deepseek_test` child. It does not change the primary OpenAI model or provider. Restart Codex or VS Code before spawning a new child.
 
+## Download
+
+Download the Windows archive and `SHA256SUMS.txt` from the [latest GitHub Release](https://github.com/NathanNT/codex-mux/releases/latest). Verify the archive checksum, then extract it into the repository root. The archive includes both required executables together with `LICENSE` and `NOTICE`.
+
 ## Quick start
 
 From PowerShell, with the existing `DEEPSEEK_API_KEY` loaded into the process environment:
@@ -64,3 +68,7 @@ Restore the original configuration at any time:
 The original Codex installation and primary OpenAI configuration are never replaced.
 
 See [DOCUMENTATION.md](DOCUMENTATION.md) for installation, usage, verification, security, provider configuration, and restoration details.
+
+## License
+
+This project is distributed under the [Apache License 2.0](LICENSE). The executable is a modified build derived from [OpenAI Codex](https://github.com/openai/codex); attribution and modification details are in [NOTICE](NOTICE). This independent project is not affiliated with or endorsed by OpenAI.

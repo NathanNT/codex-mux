@@ -1,0 +1,15 @@
+OpenAI Codex
+Copyright 2025 OpenAI
+
+This project includes code derived from [Ratatui](https://github.com/ratatui/ratatui), licensed under the MIT license.
+Copyright (c) 2016-2022 Florian Dehau
+Copyright (c) 2023-2025 The Ratatui Developers
+Codex Mux compatibility build
+Modifications copyright 2026 NathanNT and contributors.
+
+This distribution contains a modified build derived from OpenAI Codex
+0.154.0-alpha.6.2. The compatibility modifications are described in
+DOCUMENTATION.md. This project is independent and is not affiliated with or
+endorsed by OpenAI.
+
+OpenAI Codex source: https://github.com/openai/codex
