@@ -26,6 +26,20 @@ $markerStart = '# BEGIN codex-external-subagents-kit'
 $markerEnd = '# END codex-external-subagents-kit'
 $binaryPath = Join-Path $kitRoot 'bin\codex-external-subagents.exe'
 $agentPath = Join-Path $kitRoot 'agents\deepseek_test.toml'
+$productionAgentSpecs = @(
+    [pscustomobject]@{
+        name = 'deepseek_mapper'
+        description = 'Read-only DeepSeek structural mapper for bounded analysis'
+    },
+    [pscustomobject]@{
+        name = 'deepseek_tracer'
+        description = 'Read-only DeepSeek control-flow and data-flow tracer'
+    },
+    [pscustomobject]@{
+        name = 'deepseek_reviewer'
+        description = 'Read-only DeepSeek evidence and hypothesis reviewer'
+    }
+)
 $configPath = Join-Path $CodexHome 'config.toml'
 $statePath = Join-Path $kitRoot 'state\manifest.json'
 $vscodeSettingsPath = Join-Path (Split-Path $CodexHome -Parent) 'vscode\User\settings.json'
@@ -54,6 +68,15 @@ function Remove-ManagedInsertion(
 
 function Get-ProviderBlock {
     $escapedAgentPath = $agentPath.Replace('\', '\\').Replace('"', '\"')
+    $productionAgentBlocks = foreach ($spec in $productionAgentSpecs) {
+        $profilePath = Join-Path $kitRoot "agents\$($spec.name).toml"
+        $escapedProfilePath = $profilePath.Replace('\', '\\').Replace('"', '\"')
+        @"
+[agents.$($spec.name)]
+description = "$($spec.description)"
+config_file = "$escapedProfilePath"
+"@
+    }
     @"
 $markerStart
 [features.multi_agent_v2]
@@ -70,6 +93,8 @@ requires_openai_auth = false
 [agents.deepseek_test]
 description = "Read-only DeepSeek smoke-test agent"
 config_file = "$escapedAgentPath"
+
+$($productionAgentBlocks -join "`r`n`r`n")
 $markerEnd
 "@
 }
@@ -84,6 +109,26 @@ function Get-StatusObject {
     $agentText = if (Test-Path -LiteralPath $agentPath) {
         [IO.File]::ReadAllText($agentPath)
     } else { '' }
+    $productionProfiles = foreach ($spec in $productionAgentSpecs) {
+        $profilePath = Join-Path $kitRoot "agents\$($spec.name).toml"
+        $profileText = if (Test-Path -LiteralPath $profilePath) {
+            [IO.File]::ReadAllText($profilePath)
+        } else { '' }
+        [pscustomobject]@{
+            name = $spec.name
+            present = Test-Path -LiteralPath $profilePath
+            registered = $configText -match "(?m)^\s*\[agents\.$([regex]::Escape($spec.name))\]\s*$"
+            provider_deepseek = $profileText -match '(?m)^\s*model_provider\s*=\s*"deepseek"\s*$'
+            model_deepseek_flash = $profileText -match '(?m)^\s*model\s*=\s*"deepseek-flash"\s*$'
+            reasoning_high = $profileText -match '(?m)^\s*model_reasoning_effort\s*=\s*"high"\s*$'
+            read_only_auto_review = (
+                $profileText -match '(?m)^\s*sandbox_mode\s*=\s*"read-only"\s*$' -and
+                $profileText -match '(?m)^\s*approval_policy\s*=\s*"on-request"\s*$' -and
+                $profileText -match '(?m)^\s*approvals_reviewer\s*=\s*"auto_review"\s*$'
+            )
+            file_backed_task_protocol = $profileText -match 'analysis/worker-results/<job-id>/task\.md'
+        }
+    }
     [pscustomobject]@{
         codex_home = $CodexHome
         codex_home_source = $codexHomeSource
@@ -98,6 +143,7 @@ function Get-StatusObject {
             $agentText -match '(?m)^\s*approval_policy\s*=\s*"on-request"\s*$' -and
             $agentText -match '(?m)^\s*approvals_reviewer\s*=\s*"auto_review"\s*$'
         )
+        production_profiles = @($productionProfiles)
         patched_binary_present = Test-Path -LiteralPath $binaryPath
         vscode_uses_patched_binary = $settingsText -match '"chatgpt\.cliExecutable"\s*:\s*"[^"\r\n]*codex-external-subagents\.exe"'
     }
@@ -107,7 +153,10 @@ function Enable-Kit {
     if ([string]::IsNullOrWhiteSpace($CodexHome)) {
         throw 'CODEX_HOME is not set. Pass -CodexHome explicitly.'
     }
-    foreach ($requiredPath in @($configPath, $agentPath, $binaryPath)) {
+    $productionAgentPaths = foreach ($spec in $productionAgentSpecs) {
+        Join-Path $kitRoot "agents\$($spec.name).toml"
+    }
+    foreach ($requiredPath in @($configPath, $agentPath, $binaryPath) + $productionAgentPaths) {
         if (-not (Test-Path -LiteralPath $requiredPath)) {
             throw "Required path not found: $requiredPath"
         }
@@ -156,9 +205,9 @@ function Enable-Kit {
     }
     if (-not $configText.Contains($markerStart)) {
         if ($configText -match '(?m)^\s*\[model_providers\.deepseek\]\s*$' -or
-            $configText -match '(?m)^\s*\[agents\.deepseek_test\]\s*$' -or
+            $configText -match '(?m)^\s*\[agents\.(deepseek_test|deepseek_mapper|deepseek_tracer|deepseek_reviewer)\]\s*$' -or
             $configText -match '(?m)^\s*\[features\.multi_agent_v2\]\s*$') {
-            throw 'Existing DeepSeek provider, deepseek_test agent, or multi_agent_v2 config found outside the managed block; merge the documented fragment manually.'
+            throw 'Existing DeepSeek provider, managed DeepSeek agent, or multi_agent_v2 config found outside the managed block; merge the documented fragment manually.'
         }
         $separator = if ($configText.EndsWith("`n")) { "`n" } else { "`r`n`r`n" }
         $configInsertionOffset = $configText.Length
@@ -253,6 +302,13 @@ switch ($Action) {
         if (-not $status.patched_binary_present) { throw "Patched binary not found: $binaryPath" }
         if (-not $status.agent_read_only_auto_review) {
             throw 'The DeepSeek profile must combine read-only sandboxing with on-request automatic review.'
+        }
+        foreach ($profile in $status.production_profiles) {
+            if (-not ($profile.present -and $profile.provider_deepseek -and
+                $profile.model_deepseek_flash -and $profile.reasoning_high -and
+                $profile.read_only_auto_review -and $profile.file_backed_task_protocol)) {
+                throw "Invalid DeepSeek production profile: $($profile.name)"
+            }
         }
         & $binaryPath --version
         if ($status.provider_block_enabled) {

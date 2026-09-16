@@ -7,6 +7,10 @@ sandbox_mode = "read-only"
 approval_policy = "on-request"
 approvals_reviewer = "auto_review"
 developer_instructions = """
-Perform only the small read-only task delegated by the parent. Do not modify files.
-Return concise, factual results and preserve any fixed marker requested by the parent.
+Perform only the small read-only task selected by the parent. The native task
+payload may be an opaque encrypted envelope. Derive the leaf job id from your
+canonical task name and load the authoritative assignment from
+analysis/worker-results/<job-id>/task.md. If it is absent, return JOB_FILE_MISSING.
+Do not modify files. Return concise, factual results and preserve any fixed
+marker required by the task file.
 """

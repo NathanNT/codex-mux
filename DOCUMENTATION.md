@@ -4,7 +4,10 @@
 
 This kit keeps the primary Codex agent on its existing OpenAI configuration while allowing explicitly selected native Codex subagents to use a separately registered, Responses-compatible provider. DeepSeek is the included example, but the design follows Codex's provider abstraction.
 
-The kit targets the VS Code extension's bundled Codex version `0.154.0-alpha.6.2`. It uses a side-by-side executable and never replaces the original Codex installation. The included `deepseek_test` agent uses a read-only sandbox and OpenAI automatic approval review.
+The kit targets the VS Code extension's bundled Codex version
+`0.154.0-alpha.6.2`. It uses a side-by-side executable and never replaces the
+original Codex installation. The included smoke-test, mapper, tracer, and
+reviewer agents use a read-only sandbox and OpenAI automatic approval review.
 
 ## Why a compatibility build is required
 
@@ -21,6 +24,14 @@ The compatibility build makes the smallest required changes:
 - route the reserved automatic approval reviewer through OpenAI when an external worker triggers it;
 - preserve native Codex threads, tools, parallelism, follow-up transport, and result collection;
 - allow an agent profile to reduce its sandbox to read-only without expanding parent authority.
+
+A fresh 16 September 2026 smoke showed that the current IDE transport can still
+deliver an opaque encrypted parent-to-worker task despite the compatibility
+flag. Worker-to-parent finals remain plaintext. Production use therefore adds
+a file-backed dispatch contract: the parent writes
+`analysis/worker-results/<job-id>/task.md`, uses `<job-id>` as `task_name`, and the
+read-only worker loads that file as the sole task authority. See
+`BULK-INTEGRATION.md`.
 
 OpenAI wire behavior remains unchanged when the compatibility feature is disabled.
 
@@ -102,6 +113,9 @@ manual procedure rather than a claim that all IDA tools are approved safely.
 .
 ├── agents/
 │   ├── deepseek_test.toml
+│   ├── deepseek_mapper.toml
+│   ├── deepseek_tracer.toml
+│   ├── deepseek_reviewer.toml
 │   └── external_agent.example.toml
 ├── bin/
 │   ├── codex-external-subagents.exe
@@ -340,6 +354,10 @@ Verify that:
 
 `enable` refuses to overwrite an existing `deepseek` provider, `deepseek_test` agent, or different `chatgpt.cliExecutable` setting. Repeated enablement is idempotent and preserves the recovery manifest.
 
+Releases before the production-role update registered only `deepseek_test`.
+Upgrade an already enabled installation with `disable`, update the repository,
+then run `enable` again so the manifest records the complete four-role block.
+
 Restart VS Code after enabling. When the key is not already in VS Code's environment, start it from the PowerShell process that loaded `.env`:
 
 ```powershell
@@ -350,7 +368,15 @@ Do not persist the key in VS Code settings.
 
 ## Usage
 
-The registered native agent type is `deepseek_test`. Only an explicit spawn of this role selects DeepSeek. The parent retains its current OpenAI provider and model.
+The registered native agent types are `deepseek_test`, `deepseek_mapper`,
+`deepseek_tracer`, and `deepseek_reviewer`. Only an explicit spawn of one of
+these roles selects DeepSeek. The parent retains its current OpenAI provider
+and model.
+
+Use `deepseek_test` only for transport checks. Use `deepseek_mapper` for a
+bounded structural inventory, `deepseek_tracer` for one control/data-flow
+question, and `deepseek_reviewer` for contradiction and falsification. All
+four roles use the file-backed task contract.
 
 ### Change the external child model
 
@@ -368,14 +394,13 @@ This setting applies only to `deepseek_test`; it does not change the root OpenAI
 
 ### Single-child smoke test
 
-Ask the primary agent:
+First create `analysis/worker-results/deepseek_smoke/task.md` containing the
+bounded read request and marker. Then ask the primary agent:
 
 ```text
-Spawn one native subagent with agent_type deepseek_test. Ask it to read
-README.md and return:
-1. the filename
-2. the first heading
-3. the fixed marker DEEPSEEK_CHILD_OK
+Spawn one native subagent with agent_type deepseek_test and task_name
+deepseek_smoke. It must load its authoritative task from
+analysis/worker-results/deepseek_smoke/task.md.
 
 Wait for the child and report its result. Do not read the file on the
 parent's behalf.
@@ -408,9 +433,10 @@ or otherwise approval-requiring work with the OpenAI parent.
 ### Parallel-child test
 
 ```text
-Spawn two native subagents concurrently with agent_type deepseek_test.
-Child A must read README.md and child B must read DOCUMENTATION.md.
-Each must return the filename, first heading, and DEEPSEEK_CHILD_OK.
+Create two distinct file-backed tasks under analysis/worker-results/. Spawn two
+native subagents concurrently with agent_type deepseek_test and task_name set
+to each matching job id. Each child must load its own task.md and return its
+required marker.
 Continue useful parent-side work while both run, then wait for and
 summarize both results.
 ```
@@ -437,6 +463,18 @@ requires_openai_auth = false
 [agents.deepseek_test]
 description = "Read-only DeepSeek smoke-test agent"
 config_file = "C:\\path\\to\\repository\\agents\\deepseek_test.toml"
+
+[agents.deepseek_mapper]
+description = "Read-only DeepSeek structural mapper for bounded analysis"
+config_file = "C:\\path\\to\\repository\\agents\\deepseek_mapper.toml"
+
+[agents.deepseek_tracer]
+description = "Read-only DeepSeek control-flow and data-flow tracer"
+config_file = "C:\\path\\to\\repository\\agents\\deepseek_tracer.toml"
+
+[agents.deepseek_reviewer]
+description = "Read-only DeepSeek evidence and hypothesis reviewer"
+config_file = "C:\\path\\to\\repository\\agents\\deepseek_reviewer.toml"
 # END codex-external-subagents-kit
 ```
 
@@ -545,6 +583,10 @@ OpenAI trademarks are used only to describe the origin and compatibility target.
 Every binary release archive includes `LICENSE` and `NOTICE` alongside the executables. Users redistributing the archive or binaries should preserve those files and review the license obligations applicable to their distribution.
 
 ## Validation evidence
+
+The original direct-message pilot below is historical. The current production
+acceptance test is the file-backed smoke described above; direct inbound task
+plaintext is not assumed.
 
 The completed runtime test used:
 

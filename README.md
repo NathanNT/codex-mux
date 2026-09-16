@@ -2,7 +2,8 @@
 
 A reversible compatibility kit for running native Codex subagents through an external Responses-compatible provider while the primary agent remains on OpenAI.
 
-The included profile uses DeepSeek and is read-only. This build targets Codex `0.154.0-alpha.6.2`.
+The included smoke-test and production profiles use DeepSeek and are read-only.
+This build targets Codex `0.154.0-alpha.6.2`.
 
 The external child uses a read-only sandbox with automatic approval review.
 Ordinary reads proceed directly; approval-gated MCP operations are reviewed by
@@ -67,7 +68,13 @@ From PowerShell, with the existing `DEEPSEEK_API_KEY` loaded into the process en
 .\manage.ps1 status
 ```
 
-Restart VS Code from the same environment, then ask Codex to spawn a native subagent with `agent_type = "deepseek_test"`.
+Restart VS Code from the same environment. The kit registers
+`deepseek_test`, `deepseek_mapper`, `deepseek_tracer`, and
+`deepseek_reviewer`. Before spawning any external-provider child, write its
+complete assignment to
+`analysis/worker-results/<job-id>/task.md` and use the exact `<job-id>` as the
+spawn `task_name`. Current native parent-to-worker payloads may be encrypted;
+the file-backed assignment is authoritative.
 
 Restore the original configuration at any time:
 
@@ -78,6 +85,10 @@ Restore the original configuration at any time:
 The original Codex installation and primary OpenAI configuration are never replaced.
 
 See [DOCUMENTATION.md](DOCUMENTATION.md) for installation, usage, verification, security, provider configuration, and restoration details.
+
+For the selected DeepSeek model, file-backed native-job protocol, and the
+planned 16-to-100 worker reverse-engineering pipeline, see
+[BULK-INTEGRATION.md](BULK-INTEGRATION.md).
 
 The compatibility source delta is included under `patches/`; `build.ps1`
 reproduces the patched Codex executable from the pinned upstream tag. The
